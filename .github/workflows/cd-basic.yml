@@ -1,0 +1,30 @@
+name: Python Application CD basic
+
+on: workflow_dispatch
+  # push:
+  #   branches: [ main ]
+
+env:
+  TAG: latest
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: cicd
+  
+jobs:
+  Deploy:
+    name: Deploy to EC2 without ECR
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v2 
+      - name: Build image, Send to EC2 and Run
+        id: deploy
+        env:
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{secrets.SSH_HOST}}
+          USER_NAME: ${{secrets.USER_NAME}}
+        run: |
+          echo "$PRIVATE_KEY" > private_key && chmod 600 private_key
+          export TAG=$(git rev-parse --short HEAD)
+          docker build -t cicd:$TAG .
+          docker save cicd:$TAG | ssh -o StrictHostKeyChecking=no -i private_key ${USER_NAME}@${HOSTNAME} sudo docker load
+          echo "sudo docker run -p 8080:80 cicd:$TAG" | ssh -o StrictHostKeyChecking=no -i private_key ${USER_NAME}@${HOSTNAME}
