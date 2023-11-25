@@ -1,0 +1,56 @@
+name: Python Application CD
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+      - 'src/tests/**'
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: cicd
+  
+jobs:
+  Deploy:
+    name: Deploy to EC2 using ECR
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v2 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          echo "$PRIVATE_KEY" > private_key && chmod 600 private_key
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$TAG
+
+      - name: Pull and Deploy from Amazon ECR to EC2
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+          PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOSTNAME: ${{secrets.SSH_HOST}}
+          USER_NAME: ${{secrets.USER_NAME}}
+        run: |
+          echo "$PRIVATE_KEY" > private_key && chmod 600 private_key
+          echo "aws ecr get-login-password --region ap-south-1 | \
+          sudo docker login --username AWS --password-stdin $ECR_REGISTRY" > commands.txt
+          echo "sudo docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$TAG" > commands.txt 
+          echo "sudo docker stop \$(sudo docker container ls -q) &>> /dev/null" >> commands.txt
+          echo "sudo docker run -d -p 8080:80 $ECR_REGISTRY/$ECR_REPOSITORY:$TAG" >> commands.txt
+          cat commands.txt | ssh -o StrictHostKeyChecking=no -i private_key ${USER_NAME}@${HOSTNAME} 
